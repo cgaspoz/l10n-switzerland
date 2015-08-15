@@ -485,6 +485,36 @@ class PaymentSlip(models.Model):
             text.textLine(line)
         canvas.drawText(text)
 
+    @api.model
+    def _draw_company_address(self, canvas, font, initial_position,
+                      company):
+        """Draw the company address on canvas
+
+        :param font: font to use
+        :type font: :py:class:`FontMeta`
+
+        :para initial_position: tuple of coordinate (x, y)
+        :type initial_position: tuple
+
+        :param company: current `res.company` record
+        :type company: :py:class:`openerp.models.Model`
+
+        """
+        x, y = initial_position
+        x += company.bvr_add_horz * inch
+        y += company.bvr_add_vert * inch
+        text = canvas.beginText()
+        text.setTextOrigin(x, y)
+        text.setFont(font.name, font.size)
+        text.textOut(company.name)
+        text.moveCursor(0.0, font.size)
+        address = [company.street, company.street2, "%s %s" % (company.zip, company.city)]
+        for line in address:
+            if not line:
+                continue
+            text.textLine(line)
+        canvas.drawText(text)
+
     @api.multi
     def _draw_description_line(self, canvas, print_settings, initial_position,
                                font):
@@ -522,17 +552,8 @@ class PaymentSlip(models.Model):
                           message % (invoice.number, fmt_date))
 
     @api.model
-    def _draw_bank(self, canvas, print_settings, initial_position, font, bank):
+    def _draw_bank(self, canvas, font, bank, initial_position, company):
         """Draw bank number on canvas
-
-        :param canvas: payment slip reportlab component to be drawn
-        :type canvas: :py:class:`reportlab.pdfgen.canvas.Canvas`
-
-        :param print_settings: layouts print setting
-        :type print_settings: :py:class:`PaymentSlipSettings` or subclass
-
-        :para initial_position: tuple of coordinate (x, y)
-        :type initial_position: tuple
 
         :param font: font to use
         :type font: :py:class:`FontMeta`
@@ -540,14 +561,20 @@ class PaymentSlip(models.Model):
         :param bank: bank record
         :type bank: :py:class:`openerp.model.Models`
 
+        :para initial_position: tuple of coordinate (x, y)
+        :type initial_position: tuple
+
+        :param company: current `res.company` record
+        :type company: :py:class:`openerp.models.Model`
+
         """
         x, y = initial_position
-        x += print_settings.bvr_delta_horz * inch
-        y += print_settings.bvr_delta_vert * inch
+        x += company.bvr_delta_horz * inch
+        y += company.bvr_delta_vert * inch
         text = canvas.beginText()
         text.setTextOrigin(x, y)
         text.setFont(font.name, font.size)
-        lines = bank.name.split("\n")
+        lines = [bank.name, "%s %s" % (bank.zip, bank.city)]
         text.textOut(lines.pop(0))
         text.moveCursor(0.0, font.size)
         for line in lines:
@@ -732,7 +759,7 @@ class PaymentSlip(models.Model):
         return PaymentSlipSettings(report_name, **company_settings)
 
     def _draw_payment_slip(self, a4=False, out_format='PDF', scale=None,
-                           b64=False, report_name=None):
+                           b64=False):
         """Generate the payment slip image
         :param a4: If set to True will print on slip on a A4 paper format
         :type a4: bool
@@ -754,10 +781,7 @@ class PaymentSlip(models.Model):
                 'Only PDF payment slip are supported'
             )
         self.ensure_one()
-        lang = self.invoice_id.partner_id.lang
-        self = self.with_context(lang=lang)
         company = self.env.user.company_id
-        print_settings = self._get_settings(report_name)
         self._register_fonts()
         default_font = self._get_text_font()
         small_font = self._get_samll_text_font()
@@ -773,87 +797,81 @@ class PaymentSlip(models.Model):
             canvas = Canvas(buff,
                             pagesize=canvas_size,
                             pageCompression=None)
-            self._draw_background(canvas, print_settings)
+            if company.bvr_background:
+                canvas.drawImage(self.image_absolute_path('bvr.png'),
+                                 0, 0, 8.271 * inch, 4.174 * inch)
             canvas.setFillColorRGB(*self._fill_color)
             if a4:
-                initial_position = (0.05 * inch,  4.50 * inch)
+                initial_position = (0.16 * inch, 8.50 * inch)
                 self._draw_description_line(canvas,
-                                            print_settings,
-                                            initial_position,
-                                            default_font)
+                                            default_font,
+                                            initial_position)
             if invoice.partner_bank_id.print_partner:
                 if (invoice.partner_bank_id.print_account or
                         invoice.partner_bank_id.bvr_adherent_num):
-                    initial_position = (0.05 * inch,  3.30 * inch)
+                    initial_position = (0.16 * inch,  3.30 * inch)
                 else:
-                    initial_position = (0.05 * inch,  3.75 * inch)
-                self._draw_address(canvas, print_settings, initial_position,
-                                   default_font, company.partner_id)
+                    initial_position = (0.16 * inch,  3.75 * inch)
+                self._draw_address(canvas, default_font, company.partner_id,
+                                   initial_position, company)
                 if (invoice.partner_bank_id.print_account or
                         invoice.partner_bank_id.bvr_adherent_num):
                     initial_position = (2.45 * inch, 3.30 * inch)
                 else:
                     initial_position = (2.45 * inch, 3.75 * inch)
-                self._draw_address(canvas, print_settings, initial_position,
-                                   default_font, company.partner_id)
+                self._draw_address(canvas, default_font, company.partner_id,
+                                   initial_position, company)
             com_partner = self.get_comm_partner()
-            initial_position = (0.05 * inch, 1.4 * inch)
-            self._draw_address(canvas, print_settings, initial_position,
-                               default_font, com_partner)
+            initial_position = (0.16 * inch, 1.4 * inch)
+            self._draw_address(canvas, default_font, com_partner,
+                               initial_position, company)
             initial_position = (4.86 * inch, 2.2 * inch)
-            self._draw_address(canvas, print_settings, initial_position,
-                               default_font, com_partner)
+            self._draw_address(canvas, default_font, com_partner,
+                               initial_position, company)
             num_car, frac_car = ("%.2f" % self.amount_total).split('.')
-            self._draw_amount(canvas, print_settings,
-                              (1.48 * inch, 2.0 * inch),
-                              amount_font, num_car)
-            self._draw_amount(canvas, print_settings,
-                              (2.14 * inch, 2.0 * inch),
-                              amount_font, frac_car)
-            self._draw_amount(canvas, print_settings,
-                              (3.88 * inch, 2.0 * inch),
-                              amount_font, num_car)
-            self._draw_amount(canvas, print_settings,
-                              (4.50 * inch, 2.0 * inch),
-                              amount_font, frac_car)
+            self._draw_amount(canvas, amount_font, num_car,
+                              (1.48 * inch, 2.0 * inch), company)
+            self._draw_amount(canvas, amount_font, frac_car,
+                              (2.14 * inch, 2.0 * inch), company)
+            self._draw_amount(canvas, amount_font, num_car,
+                              (3.88 * inch, 2.0 * inch), company)
+            self._draw_amount(canvas, amount_font, frac_car,
+                              (4.50 * inch, 2.0 * inch), company)
             if invoice.partner_bank_id.print_bank:
                 self._draw_bank(canvas,
-                                print_settings,
-                                (0.05 * inch, 3.75 * inch),
                                 default_font,
-                                bank_acc.bank)
+                                bank_acc.bank,
+                                (0.16 * inch, 3.75 * inch),
+                                company)
                 self._draw_bank(canvas,
-                                print_settings,
-                                (2.45 * inch, 3.75 * inch),
                                 default_font,
-                                bank_acc.bank)
+                                bank_acc.bank,
+                                (2.45 * inch, 3.75 * inch),
+                                company)
+                # We print the company address too
+                initial_position = (0.16 * inch, 3.2 * inch)
+                self._draw_company_address(canvas, default_font,
+                               initial_position, company)
+                initial_position = (2.45 * inch, 3.2 * inch)
+                self._draw_company_address(canvas, default_font,
+                               initial_position, company)
             if invoice.partner_bank_id.print_account:
-                self._draw_bank_account(canvas,
-                                        print_settings,
-                                        (1 * inch, 2.35 * inch),
-                                        default_font,
-                                        bank_acc.get_account_number())
-                self._draw_bank_account(canvas,
-                                        print_settings,
-                                        (3.4 * inch, 2.35 * inch),
-                                        default_font,
-                                        bank_acc.get_account_number())
+                self._draw_bank_account(canvas, default_font,
+                                        bank_acc.get_account_number(),
+                                        (1 * inch, 2.35 * inch), company)
+                self._draw_bank_account(canvas, default_font,
+                                        bank_acc.get_account_number(),
+                                        (3.4 * inch, 2.35 * inch), company)
 
-            self._draw_ref(canvas,
-                           print_settings,
-                           (4.9 * inch, 2.70 * inch),
-                           default_font,
-                           self.reference)
-            self._draw_recipe_ref(canvas,
-                                  print_settings,
-                                  (0.05 * inch, 1.6 * inch),
-                                  small_font,
-                                  self.reference)
+            self._draw_ref(canvas, default_font, self.reference,
+                           (4.9 * inch, 2.70 * inch), company)
+            self._draw_recipe_ref(canvas, small_font, self.reference,
+                                  (0.16 * inch, 1.6 * inch), company)
             self._draw_scan_line(canvas,
-                                 print_settings,
+                                 scan_font,
                                  (8.26 * inch - 4/10 * inch, 4/6 * inch),
-                                 scan_font)
-            self._draw_hook(canvas, print_settings)
+                                 company)
+            self._draw_hook(canvas)
             canvas.showPage()
             canvas.save()
             img_stream = buff.getvalue()
